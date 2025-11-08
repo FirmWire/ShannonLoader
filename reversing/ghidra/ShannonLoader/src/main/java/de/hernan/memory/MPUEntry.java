@@ -1,17 +1,13 @@
 // Copyright (c) 2023, Grant Hernandez
 // SPDX-License-Identifier: MIT
-package de.hernan;
+package de.hernan.memory;
 
 import java.util.ArrayList;
 import java.io.IOException;
 
 import ghidra.app.util.bin.BinaryReader;
 
-public class MPUEntry {
-  private int slotId;
-  private long baseAddress;
-  private int size;
-  private int flags;
+public class MPUEntry extends MemEntry {
   private boolean enabled;
 
   private static String [] apName = new String[] {"NA","P_RW", "P_RW/U_RO", "RW", "RESV", "P_RO/U_NA", "RO", "RESV"};
@@ -23,18 +19,15 @@ public class MPUEntry {
   private void readEntry(BinaryReader reader) throws IOException
   {
       this.slotId = reader.readNextInt();
-      this.baseAddress = reader.readNextUnsignedInt();
+      this.start = reader.readNextUnsignedInt();
       this.size = reader.readNextInt();
       this.flags = 0;
+      this.end = start + getSize() - 1;
 
       for (int i = 0; i < 6; i++)
         this.flags |= reader.readNextInt();
 
       this.enabled = reader.readNextInt() != 0;
-  }
-
-  public long getStartAddress() {
-    return baseAddress;
   }
 
   public long getSize() {
@@ -48,10 +41,9 @@ public class MPUEntry {
       return getStartAddress() + (getSize() - 1L);
   }
 
-  public int getSlotId() {
-    return this.slotId;
-  }
 
+
+  @Override
   public boolean isExecutable() {
     // eXecute Never = 0 -> executable
     return ((flags >> 12) & 1) == 0;
@@ -62,11 +54,13 @@ public class MPUEntry {
   }
 
   // we assume from perspective of supervisor
+  @Override
   public boolean isReadable() {
     int bits = getAPBits();
     return bits != 0 && bits != 4 && bits != 7;
   }
 
+  @Override
   public boolean isWritable() {
     int bits = getAPBits();
     return bits == 1 || bits == 2 || bits == 3;
@@ -75,6 +69,6 @@ public class MPUEntry {
   @Override
   public String toString() {
     return String.format("MPUEntry<slot=%d, start=%08x, end=%08x, exec=%s, ap=%s>",
-        this.slotId, this.baseAddress, getEndAddress(), isExecutable(), apName[getAPBits()]);
+        this.slotId, getStartAddress(), getEndAddress(), isExecutable(), apName[getAPBits()]);
   }
 }

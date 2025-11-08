@@ -18,6 +18,9 @@ import java.util.List;
 import adubbz.nx.loader.common.MemoryBlockHelper;
 import de.hernan.util.PatternFinder;
 import de.hernan.util.PatternEntry;
+import de.hernan.memory.MMUEntry;
+import de.hernan.memory.MPUEntry;
+import de.hernan.memory.MemEntry;
 
 import ghidra.app.cmd.disassemble.ArmDisassembleCommand;
 import ghidra.app.util.Option;
@@ -60,11 +63,12 @@ public class ShannonLoader extends BinaryLoader
     private MemoryBlockHelper memoryHelper = null;
     private HashMap<String, TOCSectionHeader> headerMap = new HashMap<>();
     private ArrayList<AddressItem> addrEntries = new ArrayList<>();
-    private ArrayList<MPUEntry> mpuEntries = new ArrayList<>();
+    private ArrayList<MemEntry> memEntries = new ArrayList<>();
     private FlatProgramAPI fapi = null;
 
 
     private int mpuTableOffset = -1;
+    private int mmuTableOffset = -1;
 
     Map<String, List<PatternEntry>> patternDB = Map.ofEntries(
         entry("soc_version",
@@ -111,6 +115,21 @@ public class ShannonLoader extends BinaryLoader
               "\\x01\\x00\\x00\\x00 # matches the next entry slot ID of 1",
               "\\x00\\x00\\x00\\x04 # matches address 0x04000000 which is the Cortex-R Tightly Coupled Memory (TCM) region",
               "\\x20 # matches the size code of 0x20000"
+              )
+            )
+          )
+        ),
+
+        entry("mmu_table",
+          List.of(
+            new PatternEntry(String.join("\n",
+              "# pattern for g5300i",
+              "\\x00\\x98\\x01\\x02 # matches the phys start address",
+              "\\x00\\x98\\x01\\x02 # matches the virt start address",
+              "\\x00\\x98\\x11\\x02 # mathes lower region bytes",
+              "\\x0c\\x94\\x01\\x00 # matches higher region bytes",
+              "\\x00\\x00\\x00\\x40 # matches next range phys start address",
+              "\\x00\\x00\\x00\\x40 # matches next range virt start address"
               )
             )
           )
@@ -291,9 +310,9 @@ public class ShannonLoader extends BinaryLoader
 
     class AddressItem {
       public boolean end;
-      public MPUEntry entry;
+      public MemEntry entry;
 
-      public AddressItem(MPUEntry entry, boolean end) {
+      public AddressItem(MemEntry entry, boolean end) {
         this.entry = entry;
         this.end = end;
       }
@@ -360,6 +379,18 @@ public class ShannonLoader extends BinaryLoader
           if (!calculateShannonMemoryMap()) {
             throw new LoadException("Error calculating shannon memory map.");
           }
+        } else if (mmuTableOffset != -1){
+          if (!readMMUTable(reader)) {
+            throw new LoadException("Error reading MMU table.");
+          }
+          Msg.warn(this, "Found MMU Table found. Using MMU entries for memory map.");
+          Msg.warn(this, "MMU support is experimental. Ranges and attributes may be inaccurate.");
+
+          if (!calculateShannonMemoryMap()) {
+            throw new LoadException("Error calculating shannon memory map from MMU.");
+          }
+        } else {
+          throw new LoadException("No MPU or MMU table found. Cannot determine section permissions.");
         }
 	monitor.incrementProgress(10);
 
@@ -375,6 +406,8 @@ public class ShannonLoader extends BinaryLoader
 
         if (mpuTableOffset != -1) {
           typeMPUTable();
+        } else if (mmuTableOffset != -1) {
+          typeMMUTable();
         }
         monitor.incrementProgress(10);
 
@@ -407,11 +440,11 @@ public class ShannonLoader extends BinaryLoader
 
         DataType dat = dtm.addDataType(mpuEntryStruct, DataTypeConflictHandler.REPLACE_HANDLER);
 
-        if (mpuEntries.size() == 0)
+        if (memEntries.size() == 0)
           return false;
 
         Address start = fapi.toAddr(headerMap.get("MAIN").getLoadAddress()+mpuTableOffset);
-        ArrayDataType adty = new ArrayDataType(dat, mpuEntries.size(), dat.getLength());
+        ArrayDataType adty = new ArrayDataType(dat, memEntries.size(), dat.getLength());
 
         DataType adtyadd = dtm.addDataType(adty, DataTypeConflictHandler.REPLACE_HANDLER);
 
@@ -421,6 +454,37 @@ public class ShannonLoader extends BinaryLoader
           return true;
         } catch (Exception e) {
           Msg.warn(this, "Failed to type MPUTable", e);
+          return false;
+        }
+    }
+
+    private boolean typeMMUTable()
+    {
+        // Type the entries
+        DataTypeManager dtm = fapi.getCurrentProgram().getDataTypeManager();
+        StructureDataType mmuEntryStruct = new StructureDataType("MMUTableEntry", 0);
+
+        mmuEntryStruct.add(new PointerDataType(), -1, "pa_start", "");
+        mmuEntryStruct.add(new PointerDataType(), -1, "va_start", "");
+        mmuEntryStruct.add(new PointerDataType(), -1, "va_end", "");
+        mmuEntryStruct.add(new UnsignedIntegerDataType(), -1, "attrs", "");
+
+        DataType dat = dtm.addDataType(mmuEntryStruct, DataTypeConflictHandler.REPLACE_HANDLER);
+
+        if (memEntries.size() == 0)
+          return false;
+
+        Address start = fapi.toAddr(headerMap.get("MAIN").getLoadAddress()+mmuTableOffset);
+        ArrayDataType adty = new ArrayDataType(dat, memEntries.size(), dat.getLength());
+
+        DataType adtyadd = dtm.addDataType(adty, DataTypeConflictHandler.REPLACE_HANDLER);
+
+        try {
+          Data array = fapi.createData(start, adtyadd);
+          Msg.info(this, String.format("Typed MMUTable as %s", array));
+          return true;
+        } catch (Exception e) {
+          Msg.warn(this, "Failed to type MMUTable", e);
           return false;
         }
     }
@@ -884,12 +948,55 @@ public class ShannonLoader extends BinaryLoader
         mpuTableOffset = finder.find_pat("mpu_table");
 
         if (mpuTableOffset == -1) {
-          Msg.warn(this, "Unable to find Shannon MPU table pattern. MPU recovery is essential for correct section permissions which will improve analysis determining what is code and what is data.");
+          Msg.info(this, "Unable to find Shannon MPU table pattern.");
+          Msg.info(this, "Attempting to find MMU table for newer Shannon SoCs...");
         } else {
           Msg.info(this, String.format("MPU entry table found in section=MAIN offset=0x%08x (physical address 0x%08x)",
                 mpuTableOffset, mpuTableOffset+fromSection.getLoadAddress()));
+                return;
+        }
+        mmuTableOffset = finder.find_pat("mmu_table");
+        if (mmuTableOffset == -1) {
+          Msg.info(this, "Unable to find Shannon MMU table pattern. MMU or MPU table recovery is essential for correct section permissions which will improve analysis determining what is code and what is data.");
+        } else {
+          Msg.info(this, String.format("MMU entry table found in section=MAIN offset=0x%08x (physical address 0x%08x)",
+                mmuTableOffset, mmuTableOffset+fromSection.getLoadAddress()));
         }
     }
+
+  private boolean readMMUTable(BinaryReader reader)
+    {
+        long offset = headerMap.get("MAIN").getOffset()+mmuTableOffset;
+        reader.setPointerIndex(offset);
+
+        while (true) {
+          try {
+            MMUEntry entry = new MMUEntry(reader);
+
+            // Continue reading until we see a non 1:1 phys virt mapping,
+            // except for the case of 0x60000000 (which is likely external RAM)
+            if ( (entry.getPhysBase() != 0x60000000) && (entry.getPhysBase() != entry.getStartAddress() ))
+              break;
+
+            memEntries.add(entry);
+
+          } catch (IOException e) {
+            Msg.error(this, String.format("Failed read to next MMU entry %d", memEntries.size()));
+            return false;
+          }
+        }
+
+        Msg.info(this, String.format("==== Found %d MMU entries ====", memEntries.size()));
+
+        for (MemEntry entry : memEntries) {
+            Msg.info(this, entry.toString());
+            addrEntries.add(new AddressItem(entry, false));
+            addrEntries.add(new AddressItem(entry, true));
+        }
+
+        return true;
+    }
+
 
     private boolean readMPUTable(BinaryReader reader)
     {
@@ -904,17 +1011,17 @@ public class ShannonLoader extends BinaryLoader
             if (entry.getSlotId() == 0xff)
               break;
 
-            mpuEntries.add(entry);
+            memEntries.add(entry);
 
           } catch (IOException e) {
-            Msg.error(this, String.format("Failed read to next MPU entry %d", mpuEntries.size()));
+            Msg.error(this, String.format("Failed read to next MPU entry %d", memEntries.size()));
             return false;
           }
         }
 
-        Msg.info(this, String.format("==== Found %d MPU entries ====", mpuEntries.size()));
+        Msg.info(this, String.format("==== Found %d MPU entries ====", memEntries.size()));
 
-        for (MPUEntry entry : mpuEntries) {
+        for (MemEntry entry: memEntries) {
             Msg.info(this, entry.toString());
             addrEntries.add(new AddressItem(entry, false));
             addrEntries.add(new AddressItem(entry, true));
@@ -923,16 +1030,17 @@ public class ShannonLoader extends BinaryLoader
         return true;
     }
 
+
     private boolean calculateShannonMemoryMap()
     {
         // Uncomment if you are debugging MPU table entries
-        /*
+        /* 
         for (AddressItem it : addrEntries) {
           Msg.info(this, String.format("%s", it.toString()));
         }
         */
 
-        HashMap<Integer, MPUEntry> active = new HashMap<>();
+        HashMap<Integer, MemEntry> active = new HashMap<>();
 
         /* This is an O(n) algorithm to resolve MPU table overlaps and
          * coalesce them into a flat map where each address has a single
@@ -980,14 +1088,14 @@ public class ShannonLoader extends BinaryLoader
           if (start <= end && active.size() > 0) {
             // get the highest slot ID as this takes precedence
             int highest_key = Collections.max(active.keySet());
-            MPUEntry flags = active.get(highest_key);
+            MemEntry flags = active.get(highest_key);
             Msg.info(this, String.format("[%08x - %08x] %s", start, end, flags.toString()));
 
             String name = String.format("RAM_MPU%d", i);
             if (!memoryHelper.addUninitializedBlock(name,
                 start, end-start+1, flags.isReadable(), flags.isWritable(),
                 flags.isExecutable())) {
-              Msg.error(this, String.format("Failed to create MPU block %s", name));
+              Msg.error(this, String.format("Failed to create Memory block %s", name));
               return false;
             }
           }
