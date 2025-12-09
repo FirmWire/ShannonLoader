@@ -138,7 +138,7 @@ public class MemoryBlockHelper
               memory.convertToInitialized(block, (byte)0);
               Msg.info(this, String.format("Zero Initializing [%s - %s]", block.getStart(), block.getEnd()));
             }
-          } catch (LockException | MemoryBlockException | NotFoundException e) {
+          } catch (LockException | MemoryBlockException e) {
             Msg.error(this, String.format("Failed to initialize block @ %s", block.getStart()));
             return false;
           }
@@ -191,7 +191,7 @@ public class MemoryBlockHelper
 
             try {
               memory.split(currentBlock, writePtr);
-            } catch (NotFoundException | LockException | MemoryBlockException e) {
+            } catch (LockException | MemoryBlockException e) {
               Msg.error(this, String.format("%s: Creating merge block split failed", name));
               e.printStackTrace();
               return false;
@@ -221,7 +221,7 @@ public class MemoryBlockHelper
             writePtr = writePtr.add(amtToWrite);
             dataPtr += amtToWrite;
             chunkNum++;
-          } catch (NotFoundException | LockException | MemoryAccessException e) {
+          } catch (LockException | MemoryAccessException e) {
             Msg.error(this, String.format("%s: Creating merge block failed", name));
             e.printStackTrace();
             return false;

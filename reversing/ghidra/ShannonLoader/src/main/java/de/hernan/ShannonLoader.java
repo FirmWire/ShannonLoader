@@ -31,6 +31,7 @@ import ghidra.app.util.opinion.BinaryLoader;
 import ghidra.app.util.opinion.LoadException;
 import ghidra.app.util.opinion.LoadSpec;
 import ghidra.app.util.opinion.Loaded;
+import ghidra.app.util.opinion.Loader.ImporterSettings;
 import ghidra.app.util.opinion.LoaderTier;
 import ghidra.framework.model.Project;
 import ghidra.program.model.data.*;
@@ -286,32 +287,28 @@ public class ShannonLoader extends BinaryLoader
     }
 
     @Override
-    protected List<Loaded<Program>> loadProgram(ByteProvider provider, String programName,
-	    Project project, String programFolderPath, LoadSpec loadSpec, List<Option> options,
-	    MessageLog log, Object consumer, TaskMonitor monitor)
-		    throws IOException, CancelledException 
-    {
-        LanguageCompilerSpecPair pair = loadSpec.getLanguageCompilerSpec();
+    protected List<Loaded<Program>> loadProgram(ImporterSettings settings) throws IOException, CancelledException {
+        LanguageCompilerSpecPair pair = settings.loadSpec().getLanguageCompilerSpec();
         Language importerLanguage = getLanguageService().getLanguage(pair.languageID);
         CompilerSpec importerCompilerSpec = importerLanguage.getCompilerSpecByID(pair.compilerSpecID);
 
         Address baseAddr = importerLanguage.getAddressFactory().getDefaultAddressSpace().getAddress(0);
-        Program prog = createProgram(provider, programName, baseAddr, getName(), importerLanguage, importerCompilerSpec, consumer);
+        Program prog = createProgram(baseAddr, settings);
 
         List<Loaded<Program>> results = new ArrayList<>(1);
         try 
         {
-          this.loadInto(provider, loadSpec, options, log, prog, monitor);
-          results.add(new Loaded<Program>(prog, programName, programFolderPath));
+          this.loadInto(prog, settings);
+          results.add(new Loaded<Program>(prog, settings));
         }
         catch (Exception e) 
         {
-          Msg.error(this, "Error while loading " + programFolderPath + ": " + e);
-          prog.release(consumer);
+          Msg.error(this, "Error while loading " + settings.projectRootPath() + ": " + e);
+          prog.release(settings.consumer());
         }
 
         return results;
-    }
+	}
 
     class AddressItem {
       public boolean end;
@@ -338,13 +335,12 @@ public class ShannonLoader extends BinaryLoader
     }
 
     @Override
-    protected void loadProgramInto(ByteProvider provider, LoadSpec loadSpec, List<Option> options,
-            MessageLog messageLog, Program program, TaskMonitor monitor) 
-                    throws IOException, LoadException
-    {
-        BinaryReader reader = new BinaryReader(provider, true);
-        memoryHelper = new MemoryBlockHelper(program, messageLog, 0L);
+    protected void loadProgramInto(Program program, ImporterSettings settings)
+			throws IOException, LoadException, CancelledException {
+        BinaryReader reader = new BinaryReader(settings.provider(), true);
+        memoryHelper = new MemoryBlockHelper(program, settings.log(), 0L);
         fapi = new FlatProgramAPI(program);
+        var monitor = settings.monitor();
 
         monitor.setMaximum(100);
         monitor.incrementProgress(3);
@@ -364,7 +360,7 @@ public class ShannonLoader extends BinaryLoader
         monitor.incrementProgress(10);
 
         PatternFinder finder = new PatternFinder(
-            provider.getInputStream(sec_main.getOffset()), sec_main.getSize(),
+            settings.provider().getInputStream(sec_main.getOffset()), sec_main.getSize(),
             patternDB);
 
         monitor.incrementProgress(5);
@@ -397,12 +393,12 @@ public class ShannonLoader extends BinaryLoader
         } else {
           throw new LoadException("No MPU or MMU table found. Cannot determine section permissions.");
         }
-	monitor.incrementProgress(10);
+        monitor.incrementProgress(10);
 
-        if (!loadBasicTOCSections(provider, sec_boot, sec_main)) {
+        if (!loadBasicTOCSections(settings.provider(), sec_boot, sec_main)) {
           throw new LoadException("Error loading basic TOC sections.");
         }
-	monitor.incrementProgress(10);
+        monitor.incrementProgress(10);
 
         ////////////////////////////////////////
         // All operations use FlatProgramAPI
@@ -426,7 +422,7 @@ public class ShannonLoader extends BinaryLoader
 
         syncProgramTreeWithMemoryMap(program);
         organizeProgramTree(program);
-    }
+	}
 
     private boolean typeMPUTable()
     {
