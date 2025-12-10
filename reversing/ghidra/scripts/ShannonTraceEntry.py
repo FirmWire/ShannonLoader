@@ -9,6 +9,8 @@ from ghidra.program.flatapi import FlatProgramAPI
 from ghidra.program.model.symbol import SourceType
 from ghidra.util import Msg
 from ghidra.program.model.data import BuiltInDataTypeManager, DataTypeConflictHandler, StructureDataType
+from ghidra.program.model.util import CodeUnitInsertionException
+from ghidra.program.model.mem import MemoryAccessException
 
 import os
 import re
@@ -89,7 +91,7 @@ def force_create_string(fapi, addr, max_len):
     :param max_len: The potential maximum length of the string
     """
     try:
-        data = fapi.getBytes(addr, max_len).tolist()
+        data = list(fapi.getBytes(addr, max_len))
         strlen = data.index(0)
         fapi.clearListing(addr, addr.add(strlen))
     except ghidra.program.model.mem.MemoryAccessException as e:
@@ -262,8 +264,9 @@ def main():
             file_addr = file_field.getValue()
             file_str = getDataAt(file_addr)
 
+
             if message_str is None or not isinstance(
-                    message_str.getValue(), unicode):
+                    message_str.getValue(), str):
                 message_str = force_create_string(fapi, message_addr, 1024)
                 if message_str is None:
                     continue
@@ -272,7 +275,7 @@ def main():
                         "[%d/%d] Created missing message string @ %s" %
                         (cur + 1, maximum, message_addr))
 
-            if file_str is None or not isinstance(file_str.getValue(), unicode):
+            if file_str is None or not isinstance(file_str.getValue(), str):
                 file_str = force_create_string(fapi, file_addr, 1024)
                 if file_str is None:
                     continue
@@ -303,12 +306,12 @@ def main():
 
             if SHOW_OUTPUT:
                 print("[%d/%d] [%s] %s" % (cur + 1, maximum, caddr, symbol_name))
-        except ghidra.program.model.mem.MemoryAccessException:
+        except MemoryAccessException:
             # this happens with the false positive match of "DBT:String too long"
             print(
                 "[%d/%d] [%s] Invalid TraceEntry signature!" %
                 (cur + 1, maximum, caddr))
-        except ghidra.program.model.util.CodeUnitInsertionException:
+        except CodeUnitInsertionException:
             print(
                 "[%d/%d] Something else already at %s" %
                 (cur + 1, maximum, caddr))

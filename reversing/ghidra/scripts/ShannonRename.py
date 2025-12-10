@@ -6,7 +6,6 @@
 
 # This script was copied from a GHIDRA example script, so its a bit rough
 
-import exceptions
 import os
 import re
 
@@ -228,7 +227,7 @@ class FunctionNode(ReferenceNode):
             #    processed = r.process(processed=processed)
         return processed
 
-class FunctionNotFoundException(exceptions.Exception):
+class FunctionNotFoundException(Exception):
     pass
 
 def getStringAtAddr(addr):
@@ -377,7 +376,7 @@ def getCyclomaticComplexity():
         if monitor.isCancelled():
             break
 
-	name = function.getName()
+        name = function.getName()
 
         if "decode" not in name.lower():
             monitor.incrementProgress(1)
