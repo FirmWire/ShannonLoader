@@ -70,6 +70,7 @@ public class ShannonLoader extends BinaryLoader
 
     private int mpuTableOffset = -1;
     private int mmuTableOffset = -1;
+    private MMUEntry.SectionEndFormat mmuFormat = MMUEntry.SectionEndFormat.NONE;
 
     Map<String, List<PatternEntry>> patternDB = Map.ofEntries(
         entry("soc_version",
@@ -127,8 +128,8 @@ public class ShannonLoader extends BinaryLoader
               "# pattern for g5300i",
               "\\x00\\x98\\x01\\x02 # matches the phys start address",
               "\\x00\\x98\\x01\\x02 # matches the virt start address",
-              "\\x00\\x98\\x11\\x02 # mathes lower region bytes",
-              "\\x0c\\x94\\x01\\x00 # matches higher region bytes",
+              "\\x00\\x98\\x11\\x02 # mathes the end address",
+              "\\x0c\\x94\\x01\\x00 # matches the flags",
               "\\x00\\x00\\x00\\x40 # matches next range phys start address",
               "\\x00\\x00\\x00\\x40 # matches next range virt start address"
               )
@@ -139,6 +140,20 @@ public class ShannonLoader extends BinaryLoader
               "\\x00\\x00\\x00\\x00",
               "\\x00\\x00\\x00\\x00",
               "\\x0c\\x94\\x01\\x00"
+              )
+            )
+          )
+        ),
+        entry("mmu_table_section_format",
+          List.of(
+            new PatternEntry(String.join("\n",
+              "# g5123",
+              "\\x01\\x00\\x00\\x00 # matches the number of sections",
+              "\\x00\\x00\\x00\\x00 # matches the virt start address",
+              "\\x00\\x00\\x00\\x00 # matches the phys start address",
+              "\\x0c\\x94\\x01\\x00 # matches flags",
+              "\\x01\\x00\\x00\\x00 # matches next range phys start address",
+              "\\x00\\x00\\x10\\x00 # matches next range virt start address"
               )
             )
           )
@@ -475,10 +490,19 @@ public class ShannonLoader extends BinaryLoader
         DataTypeManager dtm = fapi.getCurrentProgram().getDataTypeManager();
         StructureDataType mmuEntryStruct = new StructureDataType("MMUTableEntry", 0);
 
-        mmuEntryStruct.add(new PointerDataType(), -1, "pa_start", "");
-        mmuEntryStruct.add(new PointerDataType(), -1, "va_start", "");
-        mmuEntryStruct.add(new PointerDataType(), -1, "va_end", "");
-        mmuEntryStruct.add(new UnsignedIntegerDataType(), -1, "attrs", "");
+        if(this.mmuFormat == MMUEntry.SectionEndFormat.SECTION_COUNT) {
+          mmuEntryStruct.add(new UnsignedIntegerDataType(), -1, "num_sections", "");
+          mmuEntryStruct.add(new PointerDataType(), -1, "va_start", "");
+          mmuEntryStruct.add(new PointerDataType(), -1, "pa_start", "");
+          mmuEntryStruct.add(new UnsignedIntegerDataType(), -1, "attrs", "");
+        } else if (this.mmuFormat == MMUEntry.SectionEndFormat.END_ADDRESS) {
+          mmuEntryStruct.add(new PointerDataType(), -1, "pa_start", "");
+          mmuEntryStruct.add(new PointerDataType(), -1, "va_start", "");
+          mmuEntryStruct.add(new PointerDataType(), -1, "va_end", "");
+          mmuEntryStruct.add(new UnsignedIntegerDataType(), -1, "attrs", "");
+        } else {
+          Msg.warn(this, "Unknown MMU section format. Cannot type MMU table.");
+        }
 
         DataType dat = dtm.addDataType(mmuEntryStruct, DataTypeConflictHandler.REPLACE_HANDLER);
 
@@ -966,8 +990,16 @@ public class ShannonLoader extends BinaryLoader
                 mpuTableOffset, mpuTableOffset+fromSection.getLoadAddress()));
                 return;
         }
+        this.mmuFormat = MMUEntry.SectionEndFormat.END_ADDRESS;
         mmuTableOffset = finder.find_pat("mmu_table");
+
         if (mmuTableOffset == -1) {
+          /* If not yet found, try alternative format first */
+          mmuTableOffset = finder.find_pat("mmu_table_section_format");
+          this.mmuFormat = MMUEntry.SectionEndFormat.SECTION_COUNT;
+        }
+        if (mmuTableOffset == -1) {
+          this.mmuFormat = MMUEntry.SectionEndFormat.NONE;
           Msg.info(this, "Unable to find Shannon MMU table pattern. MMU or MPU table recovery is essential for correct section permissions which will improve analysis determining what is code and what is data.");
         } else {
           Msg.info(this, String.format("MMU entry table found in section=MAIN offset=0x%08x (physical address 0x%08x)",
@@ -982,11 +1014,18 @@ public class ShannonLoader extends BinaryLoader
 
         while (true) {
           try {
-            MMUEntry entry = new MMUEntry(reader);
+            MMUEntry entry = new MMUEntry(reader, this.mmuFormat);
 
             // Continue reading until we see a non 1:1 phys virt mapping,
             // except for the case of 0x60000000 (which is likely external RAM)
-            if ( (entry.getPhysBase() != 0x60000000) && (entry.getPhysBase() != entry.getStartAddress() ))
+            // and 0x100000, which seems to be aliased to 0x00000000 for some images
+            if ((entry.getPhysBase() != 0x60000000) && 
+                (entry.getPhysBase() != 0x100000) &&
+                (entry.getPhysBase() != entry.getStartAddress() ))
+              break;
+
+            // Second termination condition: check page alignment
+            if ( ((entry.getPhysBase() & 0xfffff) != 0 ) || ((entry.getStartAddress() & 0xfffff) != 0 ) ) 
               break;
 
             memEntries.add(entry);
