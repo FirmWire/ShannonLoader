@@ -133,14 +133,6 @@ public class ShannonLoader extends BinaryLoader
               "\\x00\\x00\\x00\\x40 # matches next range phys start address",
               "\\x00\\x00\\x00\\x40 # matches next range virt start address"
               )
-            ),
-            new PatternEntry(String.join("\n",
-              "# pattern for s5123",
-              "\\x01\\x00\\x00\\x00",
-              "\\x00\\x00\\x00\\x00",
-              "\\x00\\x00\\x00\\x00",
-              "\\x0c\\x94\\x01\\x00"
-              )
             )
           )
         ),
@@ -496,9 +488,9 @@ public class ShannonLoader extends BinaryLoader
           mmuEntryStruct.add(new PointerDataType(), -1, "pa_start", "");
           mmuEntryStruct.add(new UnsignedIntegerDataType(), -1, "attrs", "");
         } else if (this.mmuFormat == MMUEntry.SectionEndFormat.END_ADDRESS) {
-          mmuEntryStruct.add(new PointerDataType(), -1, "pa_start", "");
           mmuEntryStruct.add(new PointerDataType(), -1, "va_start", "");
-          mmuEntryStruct.add(new PointerDataType(), -1, "va_end", "");
+          mmuEntryStruct.add(new PointerDataType(), -1, "pa_start", "");
+          mmuEntryStruct.add(new PointerDataType(), -1, "pa_end", "");
           mmuEntryStruct.add(new UnsignedIntegerDataType(), -1, "attrs", "");
         } else {
           Msg.warn(this, "Unknown MMU section format. Cannot type MMU table.");
@@ -1019,13 +1011,14 @@ public class ShannonLoader extends BinaryLoader
             // Continue reading until we see a non 1:1 phys virt mapping,
             // except for the case of 0x60000000 (which is likely external RAM)
             // and 0x100000, which seems to be aliased to 0x00000000 for some images
-            if ((entry.getPhysBase() != 0x60000000) && 
-                (entry.getPhysBase() != 0x100000) &&
+            if ((entry.getStartAddress() != 0x60000000) && 
+                (entry.getStartAddress() != 0x100000) &&
                 (entry.getPhysBase() != entry.getStartAddress() ))
               break;
 
-            // Second termination condition: check page alignment
-            if ( ((entry.getPhysBase() & 0xfffff) != 0 ) || ((entry.getStartAddress() & 0xfffff) != 0 ) ) 
+            // Second termination condition for images with explicit section count: check page alignment
+            if ( (this.mmuFormat == MMUEntry.SectionEndFormat.SECTION_COUNT) &&
+              ((entry.getPhysBase() & 0xfffff) != 0  || (entry.getStartAddress() & 0xfffff) != 0 ) ) 
               break;
 
             memEntries.add(entry);

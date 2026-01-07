@@ -43,10 +43,11 @@ public class MMUEntry extends MemEntry {
   private void readEntryWithSectionCount(BinaryReader reader) throws IOException
   {
     long n_sections = reader.readNextUnsignedInt();
-    this.phys_base = reader.readNextUnsignedInt();
     this.start = reader.readNextUnsignedInt();
-    this.end = this.start + n_sections * 0x100000 - 1;
+    this.phys_base = reader.readNextUnsignedInt();
     this.flags = reader.readNextInt();
+
+    this.end = this.start + n_sections * 0x100000 - 1;
     this.size = (int)(this.end - this.start) + 1;
     this.slotId = static_slotId;
     static_slotId += 1;
@@ -54,10 +55,12 @@ public class MMUEntry extends MemEntry {
 
   private void readEntryWithEndAddress(BinaryReader reader) throws IOException
   {
-    this.phys_base = reader.readNextUnsignedInt();
     this.start = reader.readNextUnsignedInt();
-    this.end = reader.readNextUnsignedInt() - 1;
+    this.phys_base = reader.readNextUnsignedInt();
+    long phys_end = reader.readNextUnsignedInt();
     this.flags = reader.readNextInt();
+
+    this.end =  this.start + phys_end - this.phys_base - 1;
     this.size = (int)(this.end - this.start) + 1;
     this.slotId = static_slotId;
     static_slotId += 1;
