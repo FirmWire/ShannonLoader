@@ -56,7 +56,7 @@ import ghidra.util.Msg;
 import ghidra.util.exception.*;
 import ghidra.util.task.TaskMonitor;
 
-public class ShannonLoader extends BinaryLoader 
+public class ShannonLoader extends BinaryLoader
 {
     public static final String LOADER_NAME = "Samsung Shannon Modem Binary";
     public static final LanguageID LANG_ID = new LanguageID("ARM:LE:32:v8");
@@ -264,7 +264,7 @@ public class ShannonLoader extends BinaryLoader
             new PatternEntry(String.join("\n",
               "..\\x8f\\xe2         # adr r12, REF (starts in ARM)",
               "\\x1c\\xff\\x2f\\xe1 # bx r12 (switch to thumb)",
-              "\\x8a\\x18 # add  r2,r1,r2 (REF)", 
+              "\\x8a\\x18 # add  r2,r1,r2 (REF)",
               "\\x03\\x78 # ldrb r3,[r0,#0x0]",
               "\\x01\\x30 # add  r0,#0x1",
               "\\x5c\\x07 # lsl  r4,r3,#0x1d",
@@ -286,7 +286,7 @@ public class ShannonLoader extends BinaryLoader
     );
 
     @Override
-    public Collection<LoadSpec> findSupportedLoadSpecs(ByteProvider provider) throws IOException 
+    public Collection<LoadSpec> findSupportedLoadSpecs(ByteProvider provider) throws IOException
     {
         List<LoadSpec> loadSpecs = new ArrayList<>();
         BinaryReader reader = new BinaryReader(provider, true);
@@ -311,12 +311,12 @@ public class ShannonLoader extends BinaryLoader
         Program prog = createProgram(baseAddr, settings);
 
         List<Loaded<Program>> results = new ArrayList<>(1);
-        try 
+        try
         {
           this.loadInto(prog, settings);
           results.add(new Loaded<Program>(prog, settings));
         }
-        catch (Exception e) 
+        catch (Exception e)
         {
           Msg.error(this, "Error while loading " + settings.projectRootPath() + ": " + e);
           prog.release(settings.consumer());
@@ -1011,14 +1011,14 @@ public class ShannonLoader extends BinaryLoader
             // Continue reading until we see a non 1:1 phys virt mapping,
             // except for the case of 0x60000000 (which is likely external RAM)
             // and 0x100000, which seems to be aliased to 0x00000000 for some images
-            if ((entry.getStartAddress() != 0x60000000) && 
+            if ((entry.getStartAddress() != 0x60000000) &&
                 (entry.getStartAddress() != 0x100000) &&
                 (entry.getPhysBase() != entry.getStartAddress() ))
               break;
 
             // Second termination condition for images with explicit section count: check page alignment
             if ( (this.mmuFormat == MMUEntry.SectionEndFormat.SECTION_COUNT) &&
-              ((entry.getPhysBase() & 0xfffff) != 0  || (entry.getStartAddress() & 0xfffff) != 0 ) ) 
+              ((entry.getPhysBase() & 0xfffff) != 0  || (entry.getStartAddress() & 0xfffff) != 0 ) )
               break;
 
             memEntries.add(entry);
@@ -1077,7 +1077,7 @@ public class ShannonLoader extends BinaryLoader
     private boolean calculateShannonMemoryMap()
     {
         // Uncomment if you are debugging MPU table entries
-        /* 
+        /*
         for (AddressItem it : addrEntries) {
           Msg.info(this, String.format("%s", it.toString()));
         }
@@ -1193,19 +1193,19 @@ public class ShannonLoader extends BinaryLoader
     }
 
     @Override
-    public LoaderTier getTier() 
+    public LoaderTier getTier()
     {
         return LoaderTier.SPECIALIZED_TARGET_LOADER;
     }
 
     @Override
-    public int getTierPriority() 
+    public int getTierPriority()
     {
         return 0;
     }
 
     @Override
-    public String getName() 
+    public String getName()
     {
         return LOADER_NAME;
     }
