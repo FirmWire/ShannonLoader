@@ -1,49 +1,40 @@
-# Samsung's Shannon Baseband Tool Repository [![Build and test ShannonLoader](https://github.com/grant-h/ShannonBaseband/actions/workflows/ShannonLoader.yml/badge.svg)](https://github.com/grant-h/ShannonBaseband/actions/workflows/ShannonLoader.yml)
+## ShannonLoader
 
-Scripts, tools, and information to help reverse engineer Samsung's EXYNOS cellular baseband platform, codenamed Shannon.
-These tools were released for the talk ["Emulating Samsung's Shannon Baseband for Security Testing"](https://www.blackhat.com/us-20/briefings/schedule/#emulating-samsungs-baseband-for-security-testing-20564) at Black Hat USA'2020, August 5th.
+A GHIDRA loader for Samsung's "Shannon" modem binaries. These modem binaries can be found in Samsung factory firmware images within tar files like `CP_G973FXXU3ASG8_CP13372649_CL16487963_QB24948473_REV01_user_low_ship.tar.md5`.
+Extract this tar file into its two components, `modem.bin` and `modem_debug.bin`. Load `modem.bin` using GHIDRA after installing this extension. Modem files may be compressed using lz4 - be sure to decompress them using `lz4 -d modem.bin.lz4` before loading. Some older Cortex-R modem images (<2014) have only modem.bin.
 
-## Index
+## Baseband Support
 
-### [ShannonLoader: `reversing/ghidra/ShannonLoader`](reversing/ghidra/ShannonLoader)
-A Ghidra extension for loading `modem.bin` binaries from nearly all known modems to date. All firmware images from https://github.com/grant-h/ShannonFirmware are loaded during CI tests for the loader to ensure its compatibility.
+* TOC Header parsing and sectioning
+* SoC version detection
 
-### [Ghidra Scripts: `reversing/ghidra/scripts`](reversing/ghidra/scripts)
-Ghidra post-loading Python scripts that help annotate Shannon modem images.
-This includes recovering debug strings and auto-naming functions.
-Use after loading with ShannonLoader.
+### Cortex-R SoC (Pre-5G basebands)
+* Image-agnostic MPU table extraction for an accurate memory map
+* Image-agnostic boot time relocation table processing (for a more accurate static modem image)
 
-### [Modem Binary Scripts: `reversing/modem`](reversing/modem)
-Raw `modem.bin` extraction script into sub parts and others as they are developed.
+### Cortex-A SoC (5G and above basebands)
+* Only basic TOC extraction support at the moment
+* Roadmap: MMU map recovery
 
-### [Modem Log File Processing: `reversing/btl`](reversing/btl)
-Scripts and info to parse Back Trace Log (BTL) files. These are included during modem crashes / dumps or via the "CP RAM Logging" functionality.
-These are compressed log files from the actual running modem.
+## Building and Testing
+- Ensure you have ``JAVA_HOME`` set to the path of your JDK 21 installation (the default).
+- Set ``GHIDRA_INSTALL_DIR`` to your Ghidra install directory. This can be done in one of the following ways:
+    - **Windows**: Running ``set GHIDRA_INSTALL_DIR=<Absolute path to Ghidra without quotations>``
+    - **macos/Linux**: Running ``export GHIDRA_INSTALL_DIR=<Absolute path to Ghidra>``
+    - Using ``-PGHIDRA_INSTALL_DIR=<Absolute path to Ghidra>`` when running ``./gradlew``
+    - Adding ``GHIDRA_INSTALL_DIR`` to your Windows environment variables.
+- Run ``./gradlew``
+- You'll find the output zip file inside `./dist`
 
-### [Extracted Firmware Structures: `firmware/`](firmware/)
-Information on firmware acquistion and some extracted data dumps.
+To build, install, and test all at once on Linux, use the [`./scripts/workflow.sh`](./scripts/workflow.sh). For example:
 
-## Getting started with Shannon Firmware
-Here's a quick tutorial to start reversing this firmware with [GHIDRA](https://ghidra-sre.org/).
+```
+GHIDRA_INSTALL_DIR=<Absolute path to Ghidra> ./scripts/workflow.sh <path to modem.bin> <path to existing or temporary ghidra project directory>
+```
 
-1. Download the firmware binary of choice. Make sure you have extracted the CP partition from official Samsung firmware and have further extracted the `modem.bin` file. Make sure to unlz4 the binary if it is compressed.
-1. Install the ShannonLoader at the splash screen using *File* &raquo; *Install Extensions...*. Target the `ShannonLoader.zip` release that is in the latest release tag
-1. Now start a new GHIDRA project and add a new file. Select the `modem.bin` file. You should see that this file's loader is automatically selected as "Samsung Shannon Modem Binary". If you do not see this, make sure that you have loaded the right file and installed the extension properly. Open GHIDRA debug console (bottom right on splash screen) to double check if there are any errors.
-1. Import the file, let the loader finish and once again make sure there were no errors during loading.
-1. Double click on the imported file to open CodeBrowser and hit no to auto-analysis for now.
-1. Now run the `ShannonTraceEntry.py` python script from Script Manager under the "Shannon" category. Make sure to either place scripts into your user home directory at `~/ghidra_scripts` (Linux) or add the path to them in the manager. This script will identify all trace debugging information before analysis and avoid diassembling data.
-1. Go to *Analysis* &raquo; *Auto analyze...*, and **uncheck the "Non-returning Functions - Discovered" analyzer** as this causes broken recovery of the `log_printf` function, leading to broken disassembly throughout the binary. If you do not uncheck this, you will need to restart your import from scratch.
-1. Hit analyze and let GHIDRA churn away until it settles.
-1. Next optionally run the auto-renamer script, `ShannonRename.py`. This will help you navigate the binary, but remember that the names are heuristically determined, so quality may vary. Functions with the same guessed name will have a numeric prefix appended.
-1. Start reversing!
+Note that your modem can deeply nested via compression or tar archives and this script will still work. You can pass a directory of modem files to try as well.
 
-If you want a quick look around, [we exported a GHIDRA project for a 2017 modem image](https://mega.nz/file/S04TWSLD#9fUma__iIz4mpvGlTRnDjCfm7hjUo9IIpirx51-CqjY).
-
-## Related Resources
-
-* ShannonRE (Comsecuris, REcon 2016) - https://github.com/Comsecuris/shannonRE
-* Awesome Baseband Research - https://github.com/lololosys/awesome-baseband-research
-
-## License
-
-The repository's license is MIT. NOTE: The top-level license covers only files that explicitly contain SPDX markings, not the entire repository. For other files, they may not be licensable (e.g. binary dumps, firmware) or may contain other permissive licenses.
+## Installation
+- Start Ghidra and use the "Install Extensions" dialog (``File -> Install Extensions...``).
+- Press the ``+`` button in the upper right corner.
+- Select the zip file in the file browser, then restart Ghidra.

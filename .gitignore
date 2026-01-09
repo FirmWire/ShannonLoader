@@ -1,8 +1,9 @@
+eclipse/
+.gradle/
+dist/
+build/
+.DS_Store
 *swp
 *swo
-
-# Eclipse stuff
-.classpath
-.project
-.pydevproject
-.settings
+*.log
+/bin/
