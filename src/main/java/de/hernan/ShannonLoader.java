@@ -785,10 +785,48 @@ public class ShannonLoader extends BinaryLoader
               continue;
             }
 
+            if (header.getName().equals("BOOT")) {
+              if (!loadBootSection(provider, header))
+                return false;
+
+              continue;
+            }
+
             Msg.info(this, String.format("%s: Add %s", header.getName(), header.toString()));
 
             if (!addMergeSection(provider, header))
               return false;
+        }
+
+        return true;
+    }
+
+    /* BOOT is either a single flat bootloader or a signed container holding several
+     * independently linked images. BootContainer tells the two apart and recovers a
+     * load address per image, so all this has to do is inflate what it returns.
+     */
+    private boolean loadBootSection(ByteProvider provider, TOCSectionHeader sec_boot)
+    {
+        List<BootImage> images;
+
+        try {
+          images = new BootContainer(provider, sec_boot).parse();
+        } catch (IOException e) {
+          Msg.error(this, "BOOT: failed to read section", e);
+          return false;
+        }
+
+        for (BootImage image : images) {
+          Msg.info(this, String.format("%s: Add %s", image.getName(), image.toString()));
+
+          try {
+            if (!addMergeSection(provider.getInputStream(image.getFileOffset()),
+                  image.getName(), image.getLoadAddress(), image.getSize()))
+              return false;
+          } catch (IOException e) {
+            Msg.error(this, String.format("%s: failed to read image", image.getName()), e);
+            return false;
+          }
         }
 
         return true;
