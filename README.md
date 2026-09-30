@@ -10,6 +10,7 @@ Extract this tar file into its two components, `modem.bin` and `modem_debug.bin`
 * TOC Header parsing and sectioning
 * SoC version detection
 * ScatterLoading of Memory
+* BOOT container splitting for signed multi-image bootloaders (Exynos Modem 5300/5400, i.e. Pixel 7 and later, S25). The bootloader is no longer linked at the BOOT load address on these parts, so each sub-image is placed at the address its own VBAR write declares.
 
 ### Cortex-R SoC (Pre-5G basebands)
 * Image-agnostic MPU table extraction for an accurate memory map

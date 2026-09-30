@@ -28,29 +28,54 @@ SHOW_OUTPUT = True
 
 FIND_STEP = 10000
 
+def create_trace_flags(dtm, bi_dtm):
+    """The packed word at TraceEntry+0x04. See commit message for the
+    instruction-level evidence (FUN_41ad8c08 @ 0x41ad8c08) and the two
+    corroborating readers/writers of the 0x450e0368 enable table.
+    """
+    uint_ty = bi_dtm.getDataType("/uint")
+
+    flags = StructureDataType(CategoryPath("/Shannon"), "TraceEntryFlags", 0)
+    flags.setPackingEnabled(True)
+
+    flags.addBitField(uint_ty, 5, "level", "0-31, table column")
+    flags.addBitField(uint_ty, 9, "module", "0-479, table row")
+    flags.addBitField(uint_ty, 4, "unk_14_17", "zero in every entry observed")
+    flags.addBitField(uint_ty, 3, "tag", "packed into the allocator's block header")
+    flags.addBitField(uint_ty, 11, "unk_21_31", "zero in every entry observed")
+
+    return dtm.addDataType(flags, DataTypeConflictHandler.REPLACE_HANDLER)
+
+
 def create_trace_entry():
     """create_trace_entry
 
     struct TraceEntry {
         uint magic;
-        uint unk1;
+        TraceEntryFlags flags;  // level:5, module:9, unk_14_17:4, tag:3, unk_21_31:11
         uint unk2;
         uint unk_magic;
         char * message;
         uint linenum;
         char * file;
     };
+
+    Component indices are load-bearing: ShannonRename.py reads component 4
+    for the message and component 6 for the file. flags is a nested type
+    rather than inline bitfields so those indices do not move.
     """
     handler = DataTypeConflictHandler.REPLACE_HANDLER
     bi_dtm = BuiltInDataTypeManager.getDataTypeManager()
     dtm = currentProgram.getDataTypeManager()
+
+    flags_ty = create_trace_flags(dtm, bi_dtm)
 
     structure = StructureDataType("TraceEntry", 0)
     str_ptr = bi_dtm.getPointer(bi_dtm.getDataType("/string"))
     uint_ty = bi_dtm.getDataType("/uint")
 
     structure.add(uint_ty, 4, "magic", "")
-    structure.add(uint_ty, 4, "unk1", "")
+    structure.add(flags_ty, 4, "flags", "level/module/tag, see TraceEntryFlags")
     structure.add(uint_ty, 4, "unk2", "")
     structure.add(uint_ty, 4, "unk_magic", "")
     structure.add(str_ptr, 4, "message", "")

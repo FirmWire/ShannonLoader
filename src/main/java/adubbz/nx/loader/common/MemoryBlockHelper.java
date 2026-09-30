@@ -210,6 +210,18 @@ public class MemoryBlockHelper
                     currentBlock.getStart(), currentBlock.getEnd()));
             }
 
+            /* The MPU/MMU tables hold the pre-boot mapping: Shannon boot code rewrites the text
+             * mapping from a link-time extent constant and runs with DACR set to manager for
+             * every domain, so their execute-never bits do not describe what the CPU executes.
+             * Honouring them leaves most of the image non-executable, and Ghidra's function
+             * start search and reference analyzers skip non-executable blocks entirely. */
+            if (!currentBlock.isExecute()) {
+              Msg.info(this, String.format("%s: Forcing execute on [%s - %s] (was %s)",
+                    name, currentBlock.getStart(), currentBlock.getEnd(),
+                    memoryPermissions(currentBlock)));
+              currentBlock.setExecute(true);
+            }
+
             String blockName = String.format("%s_%d_%s",
                 name, chunkNum, memoryPermissions(currentBlock));
             Msg.info(this, String.format("%s: Create sub-block %s [%s - %s] 0x%08x bytes @ %s",

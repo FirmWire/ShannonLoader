@@ -7,3 +7,5 @@ build/
 *swo
 *.log
 /bin/
+__pycache__/
+*.pyc
