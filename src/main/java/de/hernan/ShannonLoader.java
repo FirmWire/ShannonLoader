@@ -118,6 +118,17 @@ public class ShannonLoader extends BinaryLoader
               "\\x00\\x00\\x00\\x04 # matches address 0x04000000 which is the Cortex-R Tightly Coupled Memory (TCM) region",
               "\\x20 # matches the size code of 0x20000"
               )
+            ),
+            new PatternEntry(String.join("\n",
+              "# same as the above, but for SoCs with a 0x10000 byte TCM region",
+              "[\\x00]{8} # matches a slot ID of 0 and base address of 0x00000000",
+              "\\x1c\\x00\\x00\\x00 # matches a size code 0x8000 bytes",
+              "(....){6} # matches 6 arbitrary 4-byte values",
+              "\\x01\\x00\\x00\\x00 # matches an enable of 1",
+              "\\x01\\x00\\x00\\x00 # matches the next entry slot ID of 1",
+              "\\x00\\x00\\x00\\x04 # matches address 0x04000000 which is the Cortex-R Tightly Coupled Memory (TCM) region",
+              "\\x1e # matches the size code of 0x10000"
+              )
             )
           )
         ),
