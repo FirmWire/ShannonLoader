@@ -72,12 +72,11 @@ buildExtension.exclude 'ShannonFirmware/'
 buildExtension.exclude 'ghidra_*/'
 
 def hash = {
-    def stdout = new ByteArrayOutputStream()
-    exec {
+    def result = providers.exec {
         commandLine 'git', 'rev-parse', '--short', 'HEAD'
-        standardOutput = stdout
     }
-    return stdout.toString().trim()
+    
+    return result.standardOutput.asText.get().trim()
 }()
 def pathInZip = "${project.name}"
 
