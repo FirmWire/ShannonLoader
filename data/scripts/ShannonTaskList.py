@@ -60,6 +60,25 @@ SAMSUNG_CORTEX_A = {
     "subtask_task_p": 0x140,
 }
 
+# FirmWire++ sizes this Task 0x1C8 while Pixel 7 (panther) builds use 0x1D8,
+# hence the Task size search when no array of task_size exists. The SubTask
+# offsets FirmWire++ gives are unverified and therefore left out.
+SAMSUNG_S53XX = {
+    "name": "samsung-s53xx",
+    "task_size": 0x1D8,
+    "task_stackbase": 0x10,
+    "task_name_ptr": 0x4C,
+    "task_sched_prio": 0x50,
+    "task_stacksize": 0x54,
+    "task_main_fn": 0x58,
+    "task_pre_fn": 0x5C,
+}
+
+# Task size as in Pixel 10 (frankel) builds and FirmWire++
+SAMSUNG_S54XX = dict(SAMSUNG_S53XX, name="samsung-s54xx", task_size=0x1F8)
+
+TASK_LAYOUTS = [SAMSUNG_CORTEX_A, SAMSUNG_S53XX, SAMSUNG_S54XX, SAMSUNG_CORTEX_R]
+
 # SoCs shipping a Cortex-R modem core are 4G only, Cortex-A ones carry 5G
 SOC_LAYOUT = {
     "S335AP": SAMSUNG_CORTEX_R,
@@ -70,13 +89,20 @@ SOC_LAYOUT = {
     "S5000AP": SAMSUNG_CORTEX_R,
     "S5123": SAMSUNG_CORTEX_A,
     "S5123AP": SAMSUNG_CORTEX_A,
+    "S5300": SAMSUNG_S53XX,
+    "S5400": SAMSUNG_S54XX,
 }
 
 # Task names that every Shannon image seen so far schedules
 ANCHOR_TASK_NAMES = ["GLAPD", "PDNMGR", "SAEL3", "MSD_OT"]
 
-SOC_PATTERN = "[S][0-9]{3,4}(AP)?"
-SOC_TOKEN = re.compile(r"^S[0-9]{3,4}(AP)?")
+# Pixel builds name the SoC only in their version string, as in
+# g5300q-260604-260807-B-16036236. Other builds carry the SoC-ID, some junk
+# and a YYYYMMDD date, the version string ShannonLoader.java looks for.
+SOC_VERSION_PATTERN = "g[0-9]{4}[a-z]?-[0-9]{6}-[0-9]{6}-|S[0-9]{3,4}(AP)?.{0,10}[0-9]{8}"
+PIXEL_VERSION = re.compile(r"^g([0-9]{4})[a-z]?-")
+SOC_VERSION = re.compile(r"^(S[0-9]{3,4}(AP)?)(?![0-9]).{0,10}[0-9]{8}", re.S)
+IDENTIFIER_CHAR = re.compile(r"[A-Za-z0-9_]")
 SOC_SEARCH_CHUNK = 0x800000
 
 TASK_NAME = re.compile(r"^[A-Za-z0-9_]{2,24}$")
@@ -85,6 +111,10 @@ TASK_NAME_MAX = 32
 # A candidate array has to hold at least this many tasks to be believable
 MIN_TASKS = 16
 MAX_TASKS = 4096
+# Every known Task embeds its thread control block, the smallest is 0x108 bytes
+MIN_TASK_SIZE = 0x100
+MAX_TASK_SIZE = 0x400
+MAX_STACK_SIZE = 0x100000
 
 # Change to false if you don't want your output window to be spammed
 SHOW_OUTPUT = True
@@ -138,6 +168,24 @@ def read_ascii(addr, max_len):
     return "".join(out)
 
 
+def read_bytes(addr, max_len):
+    out = []
+    for i in range(max_len):
+        try:
+            out.append(chr(getByte(addr.add(i)) & 0xFF))
+        except Exception:
+            break
+    return "".join(out)
+
+
+def follows_identifier(addr):
+    try:
+        previous = chr(getByte(addr.subtract(1)) & 0xFF)
+    except Exception:
+        return False
+    return IDENTIFIER_CHAR.match(previous) is not None
+
+
 def search_chunks():
     """Initialized memory in ascending address order, in searchable slices"""
     for block in currentProgram.getMemory().getBlocks():
@@ -152,34 +200,31 @@ def search_chunks():
 
 
 def find_soc():
-    """Locates the first SoC-ID string that we know the task layout of"""
+    """Returns the SoC-ID and text of the first version string, known SoC or not"""
     monitor.setMessage("Searching for the SoC version string...")
 
     for chunk in search_chunks():
         if monitor.isCancelled():
             return None, None
 
-        for hit in findBytes(chunk, SOC_PATTERN, 64, 1):
-            text = read_ascii(hit, 64)
-            match = SOC_TOKEN.match(text)
-            if match is None:
+        for hit in findBytes(chunk, SOC_VERSION_PATTERN, 64, 1):
+            if follows_identifier(hit):
                 continue
-            soc = match.group(0)
-            # a longer digit run is not a SoC-ID
-            if len(text) > len(soc) and text[len(soc)].isdigit():
-                continue
-            if soc in SOC_LAYOUT:
-                return soc, text
+            text = read_bytes(hit, 64)
+            pixel = PIXEL_VERSION.match(text)
+            if pixel is not None:
+                return "S" + pixel.group(1), read_ascii(hit, 64)
+            match = SOC_VERSION.match(text)
+            if match is not None:
+                return match.group(1), read_ascii(hit, 64)
 
     return None, None
 
 
-def layout_preference(soc):
-    if soc is None:
-        return [SAMSUNG_CORTEX_A, SAMSUNG_CORTEX_R]
-    preferred = SOC_LAYOUT[soc]
-    others = [other for other in (SAMSUNG_CORTEX_A, SAMSUNG_CORTEX_R) if other is not preferred]
-    return [preferred] + others
+def layout_preference(preferred):
+    if preferred is None:
+        return list(TASK_LAYOUTS)
+    return [preferred] + [other for other in TASK_LAYOUTS if other is not preferred]
 
 
 def task_name_of(task, layout):
@@ -196,6 +241,10 @@ def task_name_of(task, layout):
 
 
 def is_task(task, layout):
+    # Rules out tables of string pointers, which pass every other check at any stride
+    stacksize = read_u32(task.add(layout["task_stacksize"]))
+    if not stacksize or stacksize > MAX_STACK_SIZE:
+        return False
     if task_name_of(task, layout) is None:
         return False
     main_fn = read_u32(task.add(layout["task_main_fn"]))
@@ -204,24 +253,25 @@ def is_task(task, layout):
     return is_initialized(to_addr(main_fn & ~1))
 
 
-def measure_array(anchor, layout):
-    """Grows a task array around `anchor', a candidate Task base address"""
-    if not is_task(anchor, layout):
-        return None, 0
-
-    size = layout["task_size"]
+def measure_array(anchor, layout, stride):
+    """Grows an array of `stride' byte tasks around `anchor', a Task base address"""
     start = anchor
-    while start.getOffset() > size:
-        previous = start.subtract(size)
+    while start.getOffset() > stride:
+        previous = start.subtract(stride)
         if not is_task(previous, layout):
             break
         start = previous
 
     count = 0
-    while count < MAX_TASKS and is_task(start.add(count * size), layout):
+    while count < MAX_TASKS and is_task(start.add(count * stride), layout):
         count += 1
 
     return start, count
+
+
+def stack_bases(start, count, layout, stride):
+    return len([index for index in range(count)
+                if read_u32(start.add(index * stride + layout["task_stackbase"]))])
 
 
 def anchor_candidates():
@@ -231,8 +281,9 @@ def anchor_candidates():
     for anchor in ANCHOR_TASK_NAMES:
         monitor.setMessage("Searching for task name '%s'..." % anchor)
 
-        for string_addr in findBytes(base, "\\x00%s\\x00" % anchor, 8, 1):
-            name_addr = string_addr.add(1)
+        # No leading NUL: the linker merges a name into the tail of a longer
+        # string, as SAEL3 into DS_SAEL3
+        for name_addr in findBytes(base, "%s\\x00" % anchor, 8, 1):
             pattern = "".join(
                 ["\\x%02x" % ((name_addr.getOffset() >> shift) & 0xFF) for shift in (0, 8, 16, 24)])
 
@@ -245,29 +296,63 @@ def anchor_candidates():
             return
 
 
-def find_task_list(layouts):
-    """Returns (layout, array start, task count) of the best candidate found"""
-    best = (None, None, 0)
-
+def anchor_tasks(layouts):
+    """(layout, Task base address) pairs of well known tasks, in layout preference order"""
     for xref in anchor_candidates():
         if monitor.isCancelled():
-            break
-
+            return
         for layout in layouts:
             base = xref.subtract(layout["task_name_ptr"])
-            start, count = measure_array(base, layout)
+            if is_task(base, layout):
+                yield layout, base
 
-            if count > best[2]:
-                best = (layout, start, count)
 
-            # the preferred layout matching this well is as good as it gets
-            if count >= MIN_TASKS and layout is layouts[0]:
-                return best
+def find_sized_task_list(layouts):
+    best = (None, None, None, 0)
 
-        if best[2] >= MIN_TASKS:
-            return best
+    for layout, base in anchor_tasks(layouts):
+        stride = layout["task_size"]
+        start, count = measure_array(base, layout, stride)
+        if count > best[3]:
+            best = (layout, stride, start, count)
+        if count >= MIN_TASKS:
+            break
 
     return best
+
+
+def find_longest_task_list(layouts):
+    """Some stride lines up the records of unrelated tables too, so only the
+    longest array any anchor yields is trusted
+
+    A layout whose fields sit at a constant distance from another layout's
+    matches that layout's tasks just as long at a shifted base. Only the
+    right one finds stack bases, so they break the tie.
+    """
+    best = (None, None, None, 0)
+    best_stacks = 0
+
+    for layout, base in anchor_tasks(layouts):
+        for stride in range(MIN_TASK_SIZE, MAX_TASK_SIZE + 1, 4):
+            start, count = measure_array(base, layout, stride)
+            if count == 0 or count < best[3]:
+                continue
+            stacks = stack_bases(start, count, layout, stride)
+            if count > best[3] or stacks > best_stacks:
+                best = (layout, stride, start, count)
+                best_stacks = stacks
+
+    return best
+
+
+def find_task_list(layouts):
+    """Returns (layout, stride, array start, task count) of the best candidate found"""
+    best = find_sized_task_list(layouts)
+    if best[3] >= MIN_TASKS:
+        return best
+
+    print("WARNING: no task list with a known Task size, searching for the Task size")
+    return find_longest_task_list(layouts)
 
 
 def find_struct(name):
@@ -321,13 +406,13 @@ def ensure_struct(name, size, fields, fixed_size):
     return struct
 
 
-def create_types(layout):
+def create_types(layout, task_size):
     dtm = currentProgram.getDataTypeManager()
     uint = UnsignedIntegerDataType.dataType
     size = currentProgram.getDefaultPointerSize()
     pointer = PointerDataType.getPointer(None, dtm)
 
-    task = ensure_struct("Task", layout["task_size"], [
+    task = ensure_struct("Task", task_size, [
         (layout["task_stackbase"], pointer, "stackbase"),
         (layout["task_name_ptr"], PointerDataType.getPointer(CharDataType.dataType, dtm), "name"),
         (layout["task_sched_prio"], ByteDataType.dataType, "sched_prio"),
@@ -336,17 +421,17 @@ def create_types(layout):
         (layout["task_pre_fn"], pointer, "pre_main"),
     ], True)
 
-    if task is None:
-        return None, None
+    if task is None or "subtask_task_p" not in layout:
+        return task
 
     name_size = layout["subtask_name_size"]
-    subtask = ensure_struct("SubTask", layout["subtask_task_p"] + size, [
+    ensure_struct("SubTask", layout["subtask_task_p"] + size, [
         (layout["subtask_magic"], uint, "magic"),
         (layout["subtask_name"], ArrayDataType(CharDataType.dataType, name_size, 1), "name"),
         (layout["subtask_task_p"], PointerDataType.getPointer(task, dtm), "task"),
     ], False)
 
-    return task, subtask
+    return task
 
 
 def label_task_list(start, count, task):
@@ -371,9 +456,10 @@ def label_task_list(start, count, task):
 
 
 def define_task_name(addr, name):
-    """Types the task name, taking the bytes back from any overlapping string"""
-    data = getDataAt(addr)
-    if data is not None and data.hasStringValue() and data.getLength() == len(name) + 1:
+    """Types the task name unless a string already ends with it, taking the
+    bytes back from any other overlapping data"""
+    data = getDataContaining(addr)
+    if data is not None and data.hasStringValue() and data.getMaxAddress().equals(addr.add(len(name))):
         return False
 
     try:
@@ -491,7 +577,7 @@ def define_task_functions(start, count, layout, task):
 
         monitor.incrementProgress(1)
 
-        task_addr = start.add(index * layout["task_size"])
+        task_addr = start.add(index * task.getLength())
         name = task_name_of(task_addr, layout)
 
         if define_task_name(to_addr(read_u32(task_addr.add(layout["task_name_ptr"]))), name):
@@ -519,28 +605,32 @@ def main():
     monitor.setCancelEnabled(True)
 
     soc, version = find_soc()
+    expected = SOC_LAYOUT.get(soc)
 
     if soc is None:
-        print("WARNING: no known SoC-ID found, both task layouts will be tried")
+        print("WARNING: no SoC version string found, every task layout will be tried")
+    elif expected is None:
+        print("WARNING: SoC %s (%s) has no known task layout, every task layout will be tried" %
+              (soc, version))
     else:
-        print("SoC %s (%s), %s task layout" % (soc, version, SOC_LAYOUT[soc]["name"]))
+        print("SoC %s (%s), %s task layout" % (soc, version, expected["name"]))
 
-    layouts = layout_preference(soc)
-    layout, start, count = find_task_list(layouts)
+    layout, stride, start, count = find_task_list(layout_preference(expected))
 
     if count < MIN_TASKS:
         print("ERROR: no task list found (best candidate had %d tasks)" % count)
         return
 
-    if soc is not None and layout is not SOC_LAYOUT[soc]:
+    if expected is not None and layout is not expected:
         print("WARNING: %s implies the %s layout, but the task list matches %s" %
-              (soc, SOC_LAYOUT[soc]["name"], layout["name"]))
+              (soc, expected["name"], layout["name"]))
 
-    print("Found %d tasks at %s using the %s layout" % (count, start, layout["name"]))
+    print("Found %d tasks at %s using the %s layout, 0x%x bytes each" %
+          (count, start, layout["name"], stride))
 
-    task, subtask = create_types(layout)
+    task = create_types(layout, stride)
 
-    if task is None or subtask is None:
+    if task is None:
         return
 
     if not label_task_list(start, count, task):
