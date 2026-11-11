@@ -524,14 +524,17 @@ def is_thumb(addr):
 
 
 def disassemble_entry(entry, thumb):
-    instruction = getInstructionAt(entry)
-    if instruction is not None and is_thumb(entry) == thumb:
+    listing = currentProgram.getListing()
+    if listing.getInstructionAt(entry) is not None and is_thumb(entry) == thumb:
         return True
 
-    if instruction is not None or getDataAt(entry) is not None:
+    # clearListing() also takes back a code unit that starts before `entry'
+    if listing.getInstructionContaining(entry) is not None or \
+            listing.getDefinedDataContaining(entry) is not None:
         clearListing(entry, entry.add(3))
 
-    return ArmDisassembleCommand(entry, None, thumb).applyTo(currentProgram, monitor)
+    ArmDisassembleCommand(entry, None, thumb).applyTo(currentProgram, monitor)
+    return listing.getInstructionAt(entry) is not None
 
 
 def rename(function, name, taken):
@@ -572,16 +575,12 @@ def define_task_function(value, name, task_p, taken):
     function = getFunctionAt(entry)
 
     if function is None:
-        container = getFunctionContaining(entry)
-        if container is not None:
-            print("Removing %s, it swallows %s at %s" %
-                  (container.getName(), name, entry))
-            removeFunction(container)
-
         if not disassemble_entry(entry, bool(value & 1)):
             print("ERROR: failed to disassemble %s at %s" % (name, entry))
             return False
 
+        # A function whose body runs into `entry', often one ending in a call
+        # that never returns, keeps its entry and gives up the rest
         function = createFunction(entry, name)
 
         if function is None:
