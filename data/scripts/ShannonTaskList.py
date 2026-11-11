@@ -102,8 +102,13 @@ ANCHOR_TASK_NAMES = ["GLAPD", "PDNMGR", "SAEL3", "MSD_OT"]
 SOC_VERSION_PATTERN = "g[0-9]{4}[a-z]?-[0-9]{6}-[0-9]{6}-|S[0-9]{3,4}(AP)?.{0,10}[0-9]{8}"
 PIXEL_VERSION = re.compile(r"^g([0-9]{4})[a-z]?-")
 SOC_VERSION = re.compile(r"^(S[0-9]{3,4}(AP)?)(?![0-9]).{0,10}[0-9]{8}", re.S)
+# Builds with neither, as S21 ones, still name the SoC in strings such as
+# S5123AP_PROD_SMP1600T1_PALETTE_SA_211007_174936
+SOC_ID_PATTERN = "S[0-9]{3,4}(AP)?"
+SOC_ID = re.compile(r"^(S[0-9]{3,4}(AP)?)(?![0-9])")
 IDENTIFIER_CHAR = re.compile(r"[A-Za-z0-9_]")
 SOC_SEARCH_CHUNK = 0x800000
+SOC_SEARCH_PAGE = 64
 
 TASK_NAME = re.compile(r"^[A-Za-z0-9_]{2,24}$")
 TASK_NAME_MAX = 32
@@ -200,26 +205,60 @@ def search_chunks():
             yield AddressSet(start.add(offset), start.add(last))
 
 
-def find_soc():
-    """Returns the SoC-ID and text of the first version string, known SoC or not"""
-    monitor.setMessage("Searching for the SoC version string...")
-
+def search_hits(pattern):
+    """Every match of `pattern' in initialized memory, in ascending address order"""
     for chunk in search_chunks():
-        if monitor.isCancelled():
-            return None, None
+        while not chunk.isEmpty():
+            if monitor.isCancelled():
+                return
+            hits = findBytes(chunk, pattern, SOC_SEARCH_PAGE, 1)
+            for hit in hits:
+                yield hit
+            if len(hits) < SOC_SEARCH_PAGE:
+                break
+            chunk = chunk.subtract(AddressSet(chunk.getMinAddress(), hits[len(hits) - 1]))
 
-        for hit in findBytes(chunk, SOC_VERSION_PATTERN, 64, 1):
-            if follows_identifier(hit):
-                continue
-            text = read_bytes(hit, 64)
-            pixel = PIXEL_VERSION.match(text)
-            if pixel is not None:
-                return "S" + pixel.group(1), read_ascii(hit, 64)
-            match = SOC_VERSION.match(text)
-            if match is not None:
-                return match.group(1), read_ascii(hit, 64)
 
+def soc_of_version(text):
+    pixel = PIXEL_VERSION.match(text)
+    if pixel is not None:
+        return "S" + pixel.group(1)
+    match = SOC_VERSION.match(text)
+    return None if match is None else match.group(1)
+
+
+def known_soc_id(text):
+    """Bare SoC-IDs also name RF chips such as S5511, so only SoCs of a known
+    task layout count"""
+    match = SOC_ID.match(text)
+    if match is None or match.group(1) not in SOC_LAYOUT:
+        return None
+    return match.group(1)
+
+
+def search_soc(pattern, parse):
+    for hit in search_hits(pattern):
+        if follows_identifier(hit):
+            continue
+        soc = parse(read_bytes(hit, 64))
+        if soc is not None:
+            return soc, read_ascii(hit, 64)
     return None, None
+
+
+def find_soc():
+    """Returns the SoC-ID and the text naming it
+
+    A version string names any SoC. Failing that, the first bare SoC-ID of a
+    known task layout is taken.
+    """
+    monitor.setMessage("Searching for the SoC version string...")
+    soc, text = search_soc(SOC_VERSION_PATTERN, soc_of_version)
+    if soc is not None:
+        return soc, text
+
+    monitor.setMessage("Searching for a SoC-ID...")
+    return search_soc(SOC_ID_PATTERN, known_soc_id)
 
 
 def layout_preference(preferred):
@@ -609,7 +648,7 @@ def main():
     expected = SOC_LAYOUT.get(soc)
 
     if soc is None:
-        print("WARNING: no SoC version string found, every task layout will be tried")
+        print("WARNING: no SoC-ID found, every task layout will be tried")
     elif expected is None:
         print("WARNING: SoC %s (%s) has no known task layout, every task layout will be tried" %
               (soc, version))
