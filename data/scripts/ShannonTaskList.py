@@ -127,9 +127,11 @@ def read_u32(addr):
         return None
 
 
+# Not toAddr(): PyGhidra resolves it to toAddr(int), which rejects offsets
+# from 0x80000000 up
 def to_addr(value):
     try:
-        return toAddr(value)
+        return currentProgram.getAddressFactory().getDefaultAddressSpace().getAddress(value)
     except Exception:
         return None
 
@@ -191,12 +193,11 @@ def search_chunks():
     for block in currentProgram.getMemory().getBlocks():
         if not block.isInitialized():
             continue
-        offset = block.getStart().getOffset()
-        end = block.getEnd().getOffset()
-        while offset <= end:
-            last = min(offset + SOC_SEARCH_CHUNK - 1, end)
-            yield AddressSet(toAddr(offset), toAddr(last))
-            offset = last + 1
+        start = block.getStart()
+        size = block.getSize()
+        for offset in range(0, size, SOC_SEARCH_CHUNK):
+            last = min(offset + SOC_SEARCH_CHUNK, size) - 1
+            yield AddressSet(start.add(offset), start.add(last))
 
 
 def find_soc():
