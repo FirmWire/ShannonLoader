@@ -71,17 +71,12 @@ buildExtension.exclude 'scripts/'
 buildExtension.exclude 'ShannonFirmware/'
 buildExtension.exclude 'ghidra_*/'
 
-def hash = {
-    def stdout = new ByteArrayOutputStream()
-    exec {
-        commandLine 'git', 'rev-parse', '--short', 'HEAD'
-        standardOutput = stdout
-    }
-    return stdout.toString().trim()
-}()
+def hash = providers.exec {
+    commandLine 'git', 'rev-parse', '--short', 'HEAD'
+}.standardOutput.asText.get().trim()
 def pathInZip = "${project.name}"
 
-buildExtension.duplicatesStrategy 'exclude'
+buildExtension.duplicatesStrategy = 'exclude'
 buildExtension.eachFile {
   if (it.name == "extension.properties") {
     String version = "${ghidra_version}"

@@ -17,8 +17,8 @@ jobs:
       run:
         working-directory: .
     env:
-      GHIDRA_VERSION: "12.0"
-      GHIDRA_BUILDDATE: "20251205"
+      GHIDRA_VERSION: "12.2"
+      GHIDRA_BUILDDATE: "20261016"
 
     steps:
       # Checkout main repo
@@ -27,7 +27,7 @@ jobs:
       - name: Installing JDK
         uses: actions/setup-java@v1
         with:
-          java-version: 21
+          java-version: 25
 
 
       - name: Download Ghidra ${{ env.GHIDRA_VERSION }}
